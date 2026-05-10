@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chicken Invaders</title>
+    <style>
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+            background-color: #5C3317;
+            color: #000;
+            margin: 0;
+            padding: 0;
+        }
+        canvas {
+            border: 3px solid #3B1F0B;
+            margin: 10px auto;
+            display: block;
+            border-radius: 4px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        h1 {
+            color: #FFD700;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            margin: 10px 0 5px 0;
+            font-size: 32px;
+        }
+        .leaderboards {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin: 8px auto;
+            max-width: 900px;
+        }
+        .board {
+            background: #F5DEB3;
+            border: 2px solid #3B1F0B;
+            border-radius: 8px;
+            padding: 8px 10px;
+            width: 280px;
+            text-align: left;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .board h3 {
+            text-align: center;
+            margin: 0 0 4px 0;
+            color: #5C3317;
+            border-bottom: 1px solid #A0522D;
+            padding-bottom: 4px;
+            font-size: 15px;
+        }
+        .board ol {
+            margin: 0;
+            padding-left: 22px;
+            font-size: 13px;
+        }
+        .board li {
+            padding: 1px 0;
+        }
+        .board .rank1 { color: #B8860B; font-weight: bold; }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 10;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal.active { display: flex; }
+        .modal-box {
+            background: #F5DEB3;
+            border: 3px solid #3B1F0B;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            min-width: 320px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        .modal-box h2 { margin: 0 0 10px 0; color: #5C3317; }
+        .modal-box p { margin: 6px 0; font-size: 16px; }
+        .modal-box input {
+            font-size: 18px;
+            padding: 8px;
+            width: 200px;
+            border: 2px solid #A0522D;
+            border-radius: 6px;
+            margin: 10px 0;
+            text-align: center;
+        }
+        .modal-box button {
+            font-size: 18px;
+            padding: 8px 24px;
+            background: #5C3317;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .modal-box button:hover { background: #A0522D; }
+    </style>
+</head>
+<body>
+    <h1>&#x1F414; Chicken Invaders &#x1F414;</h1>
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <div class="leaderboards" id="boards">
+        <div class="board" id="board-all">
+            <h3>&#x1F3C6; All-Time</h3>
+            <ol></ol>
+        </div>
+        <div class="board" id="board-daily">
+            <h3>&#x1F31E; Daily</h3>
+            <ol></ol>
+        </div>
+        <div class="board" id="board-weekly">
+            <h3>&#x1F4C5; Weekly</h3>
+            <ol></ol>
+        </div>
+    </div>
+
+    <div class="modal" id="nameModal">
+        <div class="modal-box">
+            <h2>&#x1F3C6; New High Score!</h2>
+            <p>You made the leaderboard!</p>
+            <p class="high-reasons" id="highReasons"></p>
+            <input id="nameInput" type="text" placeholder="Enter your name" maxlength="20" autofocus>
+            <br>
+            <button onclick="submitScore()">Submit</button>
+        </div>
+    </div>
+
+    <script>
+        const CW = 800, CH = 600;
+        const PW = 44, PH = 48;
+        const CWid = 38, CHgt = 34;
+        const EW = 8, EH = 12;
+
+        let player = { x: 0, y: CH - 70, w: PW, h: PH, speed: 5, lives: 3, shooting: false };
+        let chickens = [], bullets = [], eggs = [];
+        let score = 0, level = 1, gameOver = false;
+        let right = false, left = false;
+        let lastMove = 0, lastEgg = 0;
+        let moveSpeed = 1000, eggSpeed = 1500;
+        let dir = 1;
+        let canvas, ctx;
+        let pendingReasons = [];
+        let frame = 0;
+
+        let actx;
+        function initAudio() {
+            if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        function beep(freq, dur) {
+            try {
+                initAudio();
+                var o = actx.createOscillator();
+                var g = actx.createGain();
+                o.connect(g); g.connect(actx.destination);
+                o.type = 'square';
+                o.frequency.value = freq;
+                g.gain.value = 0.08;
+                o.start(0);
+                o.stop(actx.currentTime + dur/1000);
+            } catch(e) {}
+        }
+
+        function init() {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            document.addEventListener('keydown', function(e) {
+                var modal = document.getElementById('nameModal');
+                if (modal.classList.contains('active')) return;
+                if (e.key === 'ArrowRight') right = true;
+                if (e.key === 'ArrowLeft') left = true;
+                if (e.key === ' ' && !player.shooting && !gameOver) {
+                    initAudio();
+                    beep(800, 50);
+                    bullets.push({ x: player.x + PW/2, y: player.y - 5 });
+                    player.shooting = true;
+                }
+            });
+            document.addEventListener('keyup', function(e) {
+                if (e.key === 'ArrowRight') right = false;
+                if (e.key === 'ArrowLeft') left = false;
+                if (e.key === ' ') player.shooting = false;
+            });
+            resetGame();
+            loadLeaderboards();
+            requestAnimationFrame(loop);
+        }
+
+        function resetGame() {
+            player.x = CW/2 - PW/2;
+            player.y = CH - 70;
+            player.lives = 3;
+            score = 0; level = 1;
+            gameOver = false;
+            chickens = []; bullets = []; eggs = [];
+            dir = 1; moveSpeed = 1000; eggSpeed = 1500;
+            lastMove = 0; lastEgg = 0; frame = 0;
+            pendingReasons = [];
+            createChickens();
+            document.getElementById('nameModal').classList.remove('active');
+        }
+
+        function createChickens() {
+            for (var r = 0; r < 3; r++)
+                for (var c = 0; c < 10; c++)
+                    chickens.push({ x: c*60+100, y: r*52+40, alive: true });
+        }
+
+        function loop(ts) {
+            frame++;
+            update(ts);
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        function update(ts) {
+            if (gameOver) return;
+
+            if (right && player.x < CW-PW) player.x += player.speed;
+            if (left && player.x > 0) player.x -= player.speed;
+
+            for (var i = 0; i < bullets.length; i++) {
+                bullets[i].y -= 9;
+                if (bullets[i].y < 0) { bullets.splice(i, 1); i--; }
+            }
+            for (var i = 0; i < eggs.length; i++) {
+                eggs[i].y += 4;
+                if (eggs[i].y > CH) { eggs.splice(i, 1); i--; }
+            }
+
+            if (ts - lastMove > moveSpeed) {
+                for (var i = 0; i < chickens.length; i++) {
+                    chickens[i].x += dir * 15;
+                    if (chickens[i].x <= 0 || chickens[i].x >= CW - CWid) {
+                        dir *= -1;
+                        for (var j = 0; j < chickens.length; j++)
+                            chickens[j].y += 18;
+                        break;
+                    }
+                }
+                lastMove = ts;
+            }
+
+            if (ts - lastEgg > eggSpeed) {
+                var alive = chickens.filter(function(c) { return c.alive; });
+                if (alive.length > 0) {
+                    var d = alive[Math.floor(Math.random() * alive.length)];
+                    eggs.push({ x: d.x+CWid/2, y: d.y+CHgt, active: true });
+                }
+                lastEgg = ts;
+            }
+
+            for (var i = 0; i < bullets.length; i++) {
+                var b = bullets[i];
+                for (var j = 0; j < chickens.length; j++) {
+                    var c = chickens[j];
+                    if (c.alive && b.x < c.x+CWid && b.x+6 > c.x && b.y < c.y+CHgt && b.y+10 > c.y) {
+                        c.alive = false;
+                        bullets.splice(i, 1);
+                        score += 20;
+                        beep(300, 80);
+                        i--;
+                        break;
+                    }
+                }
+            }
+
+            for (var i = 0; i < eggs.length; i++) {
+                var e = eggs[i];
+                if (e.x < player.x+PW && e.x+EW > player.x && e.y < player.y+PH && e.y+EH > player.y) {
+                    eggs.splice(i, 1);
+                    player.lives--;
+                    beep(150, 150);
+                    if (player.lives <= 0) {
+                        gameOver = true;
+                        beep(100, 300);
+                        checkHighScore();
+                    }
+                    break;
+                }
+            }
+
+            var alive = chickens.filter(function(c) { return c.alive; });
+            if (alive.length === 0) {
+                level++;
+                createChickens();
+                moveSpeed = Math.max(200, moveSpeed - 100);
+                eggSpeed = Math.max(500, eggSpeed - 100);
+            }
+
+            for (var i = 0; i < chickens.length; i++) {
+                if (chickens[i].alive && chickens[i].y + CHgt > player.y + 10) {
+                    gameOver = true;
+                    beep(100, 300);
+                    checkHighScore();
+                }
+            }
+        }
+
+        // ---- DRAWING ----
+
+        function drawSky() {
+            var g = ctx.createLinearGradient(0, 0, 0, CH*0.65);
+            g.addColorStop(0, '#4A90D9');
+            g.addColorStop(0.5, '#87CEEB');
+            g.addColorStop(1, '#B0E0E6');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, CW, CH*0.65);
+        }
+
+        function drawSun() {
+            ctx.save();
+            var sx = 680, sy = 55, sr = 40;
+            var g = ctx.createRadialGradient(sx, sy, 5, sx, sy, sr);
+            g.addColorStop(0, '#FFFDE7');
+            g.addColorStop(0.5, '#FFE082');
+            g.addColorStop(1, 'rgba(255,224,130,0)');
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.arc(sx, sy, sr, 0, 7);
+            ctx.fill();
+            ctx.fillStyle = '#FFF9C4';
+            ctx.beginPath();
+            ctx.arc(sx, sy, 22, 0, 7);
+            ctx.fill();
+            ctx.fillStyle = '#FFEB3B';
+            ctx.beginPath();
+            ctx.arc(sx, sy, 16, 0, 7);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawClouds() {
+            ctx.fillStyle = 'rgba(255,255,255,0.85)';
+            function cloud(cx, cy, s) {
+                ctx.beginPath();
+                ctx.arc(cx, cy, 20*s, 0, 7);
+                ctx.arc(cx+25*s, cy-8*s, 25*s, 0, 7);
+                ctx.arc(cx+50*s, cy-5*s, 20*s, 0, 7);
+                ctx.arc(cx+55*s, cy+5*s, 18*s, 0, 7);
+                ctx.arc(cx+10*s, cy+8*s, 22*s, 0, 7);
+                ctx.fill();
+            }
+            cloud(80, 70, 1);
+            cloud(300, 50, 0.8);
+            cloud(550, 90, 0.9);
+        }
+
+        function drawHills() {
+            // rolling hills background
+            ctx.fillStyle = '#6B8E23';
+            ctx.beginPath();
+            ctx.moveTo(0, CH*0.6);
+            for (var x = 0; x <= CW; x += 10) {
+                var y = CH*0.6 + Math.sin(x*0.008)*30 + Math.sin(x*0.015)*15;
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(CW, CH);
+            ctx.lineTo(0, CH);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = '#556B2F';
+            ctx.beginPath();
+            ctx.moveTo(0, CH*0.65);
+            for (var x = 0; x <= CW; x += 10) {
+                var y = CH*0.65 + Math.sin(x*0.01+1)*20 + Math.sin(x*0.02)*10;
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(CW, CH);
+            ctx.lineTo(0, CH);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawBarn() {
+            // barn in background
+            var bx = 50, by = CH*0.6 - 70, bw = 70, bh = 70;
+            ctx.fillStyle = '#8B0000';
+            ctx.fillRect(bx, by, bw, bh);
+            ctx.fillStyle = '#A52A2A';
+            ctx.beginPath();
+            ctx.moveTo(bx-8, by);
+            ctx.lineTo(bx+bw/2, by-35);
+            ctx.lineTo(bx+bw+8, by);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = '#F5F5DC';
+            ctx.fillRect(bx+bw/2-10, by+30, 20, 40);
+            ctx.fillStyle = '#FFF8DC';
+            ctx.fillRect(bx+bw/2-3, by+30, 6, 40);
+            ctx.strokeStyle = '#5C3317';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(bx+bw/2-10, by+30, 20, 40);
+            // X on barn
+            ctx.strokeStyle = '#F5F5DC';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(bx+12, by+10);
+            ctx.lineTo(bx+bw-12, by+bh-15);
+            ctx.moveTo(bx+bw-12, by+10);
+            ctx.lineTo(bx+12, by+bh-15);
+            ctx.stroke();
+        }
+
+        function drawGrass() {
+            // grass layer at bottom
+            var gy = CH - 60;
+            ctx.fillStyle = '#4A7C2E';
+            ctx.fillRect(0, gy, CW, 60);
+
+            // grass blades
+            ctx.strokeStyle = '#3D6B24';
+            ctx.lineWidth = 1.5;
+            for (var x = 0; x < CW; x += 6) {
+                var h = 6 + Math.sin(x*0.3 + frame*0.02)*3;
+                ctx.beginPath();
+                ctx.moveTo(x, gy);
+                ctx.lineTo(x-2, gy-h);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(x+3, gy);
+                ctx.lineTo(x+5, gy-h+2);
+                ctx.stroke();
+            }
+
+            // fence
+            ctx.strokeStyle = '#8B6914';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, gy+8);
+            ctx.lineTo(CW, gy+8);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(0, gy+24);
+            ctx.lineTo(CW, gy+24);
+            ctx.stroke();
+            ctx.lineWidth = 3;
+            for (var x = 30; x < CW; x += 50) {
+                ctx.strokeStyle = '#A0782C';
+                ctx.fillStyle = '#8B6914';
+                ctx.fillRect(x-2, gy, 5, 30);
+            }
+        }
+
+        function drawFarmer(px, py) {
+            // boots
+            ctx.fillStyle = '#3E2723';
+            ctx.fillRect(px+4, py+PH-8, 14, 8);
+            ctx.fillRect(px+PW-18, py+PH-8, 14, 8);
+
+            // legs - overalls
+            ctx.fillStyle = '#1565C0';
+            ctx.fillRect(px+6, py+PH-32, 12, 26);
+            ctx.fillRect(px+PW-18, py+PH-32, 12, 26);
+
+            // body - shirt
+            ctx.fillStyle = '#C62828';
+            ctx.fillRect(px+4, py+12, PW-8, 20);
+
+            // overalls bib
+            ctx.fillStyle = '#1565C0';
+            ctx.fillRect(px+8, py+14, PW-16, 8);
+            // overalls straps
+            ctx.fillStyle = '#1565C0';
+            ctx.fillRect(px+4, py+10, 5, 6);
+            ctx.fillRect(px+PW-9, py+10, 5, 6);
+            // buttons
+            ctx.fillStyle = '#FFD700';
+            ctx.beginPath(); ctx.arc(px+6, py+14, 2, 0, 7); ctx.fill();
+            ctx.beginPath(); ctx.arc(px+PW-6, py+14, 2, 0, 7); ctx.fill();
+
+            // arms
+            ctx.fillStyle = '#C62828';
+            ctx.fillRect(px-2, py+14, 6, 16);
+            ctx.fillRect(px+PW-4, py+14, 6, 16);
+            // hands
+            ctx.fillStyle = '#FFCCBC';
+            ctx.beginPath();
+            ctx.arc(px, py+30, 4, 0, 7);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(px+PW, py+30, 4, 0, 7);
+            ctx.fill();
+
+            // head
+            ctx.fillStyle = '#FFCCBC';
+            ctx.beginPath();
+            ctx.arc(px+PW/2, py+6, 12, 0, 7);
+            ctx.fill();
+
+            // straw hat
+            ctx.fillStyle = '#D4A017';
+            ctx.beginPath();
+            ctx.ellipse(px+PW/2, py-2, 20, 6, 0, 0, 7);
+            ctx.fill();
+            ctx.fillStyle = '#C8960E';
+            ctx.fillRect(px+PW/2-8, py-12, 16, 10);
+            // hat band
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(px+PW/2-8, py-3, 16, 3);
+
+            // eyes
+            ctx.fillStyle = '#000';
+            ctx.beginPath(); ctx.arc(px+PW/2-4, py+5, 1.5, 0, 7); ctx.fill();
+            ctx.beginPath(); ctx.arc(px+PW/2+4, py+5, 1.5, 0, 7); ctx.fill();
+
+            // mouth
+            ctx.strokeStyle = '#C62828';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(px+PW/2, py+9, 4, 0.1, 2.8);
+            ctx.stroke();
+
+            // shotgun
+            ctx.strokeStyle = '#4E342E';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(px+PW+2, py+16);
+            ctx.lineTo(px+PW+24, py+8);
+            ctx.stroke();
+            // barrel tip
+            ctx.strokeStyle = '#757575';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(px+PW+20, py+9);
+            ctx.lineTo(px+PW+28, py+7);
+            ctx.stroke();
+        }
+
+        function drawChicken(cx, cy, row) {
+            var bodyColors = ['#FFFDE7', '#FFF8E1', '#FFF9C4'];
+            var bodyColor = bodyColors[row % 3];
+
+            // legs
+            ctx.strokeStyle = '#FF8F00';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.moveTo(cx+CWid/2-6, cy+CHgt-3);
+            ctx.lineTo(cx+CWid/2-8, cy+CHgt+6);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx+CWid/2+6, cy+CHgt-3);
+            ctx.lineTo(cx+CWid/2+8, cy+CHgt+6);
+            ctx.stroke();
+            // feet
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(cx+CWid/2-12, cy+CHgt+6);
+            ctx.lineTo(cx+CWid/2-8, cy+CHgt+6);
+            ctx.lineTo(cx+CWid/2-4, cy+CHgt+6);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx+CWid/2+4, cy+CHgt+6);
+            ctx.lineTo(cx+CWid/2+8, cy+CHgt+6);
+            ctx.lineTo(cx+CWid/2+12, cy+CHgt+6);
+            ctx.stroke();
+
+            // body
+            ctx.fillStyle = bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid/2, cy+CHgt/2+2, CWid/2-2, CHgt/2-2, 0, 0, 7);
+            ctx.fill();
+
+            // shadow on body
+            ctx.fillStyle = 'rgba(0,0,0,0.06)';
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid/2-3, cy+CHgt/2+4, CWid/2-5, CHgt/2-5, 0, 0, 7);
+            ctx.fill();
+
+            // tail feathers
+            ctx.fillStyle = bodyColor;
+            ctx.beginPath();
+            ctx.moveTo(cx+4, cy+CHgt/2-2);
+            ctx.quadraticCurveTo(cx-6, cy+4, cx-4, cy+CHgt/2);
+            ctx.fill();
+            ctx.fillStyle = '#D7CCC8';
+            ctx.beginPath();
+            ctx.moveTo(cx+3, cy+CHgt/2);
+            ctx.quadraticCurveTo(cx-4, cy+10, cx-2, cy+CHgt/2+2);
+            ctx.fill();
+
+            // wing
+            ctx.fillStyle = 'rgba(0,0,0,0.08)';
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid/2-4, cy+CHgt/2+3, 10, 7, -0.3, 0, 7);
+            ctx.fill();
+
+            // wing detail
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(cx+CWid/2-8, cy+CHgt/2+2);
+            ctx.lineTo(cx+CWid/2+2, cy+CHgt/2+4);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(cx+CWid/2-10, cy+CHgt/2+5);
+            ctx.lineTo(cx+CWid/2, cy+CHgt/2+7);
+            ctx.stroke();
+
+            // neck
+            ctx.fillStyle = bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid-10, cy+6, 7, 9, 0.2, 0, 7);
+            ctx.fill();
+
+            // head
+            ctx.fillStyle = bodyColor;
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid-8, cy+2, 8, 8, 0, 0, 7);
+            ctx.fill();
+
+            // comb (red crest on top)
+            ctx.fillStyle = '#D32F2F';
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid-10, cy-5, 5, 4, 0, 0, 7);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid-6, cy-4, 4, 3, 0, 0, 7);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid-14, cy-4, 4, 3, 0, 0, 7);
+            ctx.fill();
+
+            // wattle
+            ctx.fillStyle = '#D32F2F';
+            ctx.beginPath();
+            ctx.ellipse(cx+CWid-6, cy+8, 3, 4, 0, 0, 7);
+            ctx.fill();
+
+            // beak
+            ctx.fillStyle = '#FF8F00';
+            ctx.beginPath();
+            ctx.moveTo(cx+CWid-2, cy+1);
+            ctx.lineTo(cx+CWid+7, cy+3);
+            ctx.lineTo(cx+CWid-2, cy+6);
+            ctx.closePath();
+            ctx.fill();
+
+            // eye
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(cx+CWid-6, cy+1, 2, 0, 7);
+            ctx.fill();
+            ctx.fillStyle = '#FFF';
+            ctx.beginPath();
+            ctx.arc(cx+CWid-7, cy, 0.8, 0, 7);
+            ctx.fill();
+        }
+
+        function drawCorn(x, y) {
+            // corn kernel bullet
+            ctx.fillStyle = '#FDD835';
+            ctx.beginPath();
+            ctx.ellipse(x, y, 4, 7, 0, 0, 7);
+            ctx.fill();
+            // lighter top
+            ctx.fillStyle = '#FFF9C4';
+            ctx.beginPath();
+            ctx.ellipse(x-1, y-3, 2, 3, 0, 0, 7);
+            ctx.fill();
+            // dark tip
+            ctx.fillStyle = '#8D6E63';
+            ctx.beginPath();
+            ctx.ellipse(x, y+6, 2, 1.5, 0, 0, 7);
+            ctx.fill();
+        }
+
+        function drawEgg(x, y) {
+            // egg shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.15)';
+            ctx.beginPath();
+            ctx.ellipse(x+2, y+EH+2, EW, 3, 0, 0, 7);
+            ctx.fill();
+
+            // egg body
+            var g = ctx.createRadialGradient(x-2, y-2, 2, x, y, EH);
+            g.addColorStop(0, '#FFFDE7');
+            g.addColorStop(0.6, '#FFF8E1');
+            g.addColorStop(1, '#FFE0B2');
+            ctx.fillStyle = g;
+            ctx.beginPath();
+            ctx.ellipse(x, y, EW, EH, 0, 0, 7);
+            ctx.fill();
+
+            // highlight
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.beginPath();
+            ctx.ellipse(x-2, y-3, 2, 3, -0.2, 0, 7);
+            ctx.fill();
+        }
+
+        function draw() {
+            drawSky();
+            drawSun();
+            drawClouds();
+            drawHills();
+            drawBarn();
+
+            ctx.fillStyle = '#000';
+            ctx.font = 'bold 18px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('Score: ' + score, 12, 26);
+            ctx.fillText('Level: ' + level, 160, 26);
+            ctx.textAlign = 'right';
+            ctx.fillText('Lives: ', CW-80, 26);
+            ctx.textAlign = 'left';
+            // draw heart icons for lives
+            for (var i = 0; i < player.lives; i++) {
+                ctx.fillStyle = '#D32F2F';
+                ctx.font = '18px Arial';
+                ctx.fillText('\u2764', CW-60 + i*22, 27);
+            }
+
+            // draw chickens
+            for (var i = 0; i < chickens.length; i++) {
+                var c = chickens[i];
+                if (!c.alive) continue;
+                var bobY = Math.sin(frame*0.04 + i)*1.5;
+                drawChicken(c.x, c.y + bobY, Math.floor(i/10));
+            }
+
+            // draw bullets (corn kernels)
+            for (var i = 0; i < bullets.length; i++) {
+                var b = bullets[i];
+                drawCorn(b.x, b.y);
+            }
+
+            // draw eggs
+            for (var i = 0; i < eggs.length; i++) {
+                var e = eggs[i];
+                var wobble = Math.sin(frame*0.1 + i)*1.5;
+                drawEgg(e.x + wobble, e.y);
+            }
+
+            // draw farmer
+            drawFarmer(player.x, player.y);
+
+            // draw grass last (in front)
+            drawGrass();
+
+            // draw hoe / pitchfork that farmer holds as weapon
+            ctx.strokeStyle = '#5D4037';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            var p2x = player.x + PW + 2;
+            var p2y = player.y + 16;
+            ctx.moveTo(p2x, p2y);
+            ctx.lineTo(p2x + 20, p2y - 10);
+            ctx.stroke();
+            // pitchfork prongs
+            ctx.strokeStyle = '#78909C';
+            ctx.lineWidth = 2;
+            for (var pi = 0; pi < 3; pi++) {
+                ctx.beginPath();
+                ctx.moveTo(p2x + 18, p2y - 10 + pi*4 - 4);
+                ctx.lineTo(p2x + 28, p2y - 12 + pi*4 - 4);
+                ctx.stroke();
+            }
+
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0,0,0,0.8)';
+                ctx.fillRect(0, 0, CW, CH);
+                ctx.fillStyle = '#D32F2F';
+                ctx.font = 'bold 52px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', CW/2, CH/2-40);
+                ctx.font = 'bold 30px Arial';
+                ctx.fillStyle = '#FFD700';
+                ctx.fillText('Score: ' + score, CW/2, CH/2+20);
+                ctx.font = '20px Arial';
+                ctx.fillStyle = '#FFF';
+                ctx.fillText('Level ' + level + '  |  High Score: ' + score, CW/2, CH/2+60);
+                ctx.font = '18px Arial';
+                ctx.fillStyle = '#CCC';
+                ctx.fillText('Press R to restart', CW/2, CH/2+105);
+                ctx.textAlign = 'left';
+            }
+        }
+
+        document.addEventListener('keydown', function(e) {
+            var modal = document.getElementById('nameModal');
+            if ((e.key === 'r' || e.key === 'R') && gameOver && !modal.classList.contains('active')) {
+                resetGame();
+            }
+        });
+
+        document.getElementById('nameInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') submitScore();
+        });
+
+        window.onload = init;
+
+        function checkHighScore() {
+            fetch('/api/check_high', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ score: score })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.is_high) {
+                    pendingReasons = data.reasons;
+                    var labels = { all_time: 'All-Time', daily: 'Daily', weekly: 'Weekly' };
+                    var html = data.reasons.map(function(r) { return labels[r]; }).join(', ');
+                    document.getElementById('highReasons').textContent = 'Leaderboards: ' + html;
+                    document.getElementById('nameInput').value = '';
+                    document.getElementById('nameModal').classList.add('active');
+                    setTimeout(function() { document.getElementById('nameInput').focus(); }, 100);
+                }
+            })
+            .catch(function(err) { console.log('checkHigh error:', err); });
+        }
+
+        function submitScore() {
+            var name = document.getElementById('nameInput').value.trim();
+            if (!name) { alert('Please enter a name!'); return; }
+            fetch('/api/score', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: name, score: score, level: level })
+            })
+            .then(function() {
+                document.getElementById('nameModal').classList.remove('active');
+                loadLeaderboards();
+            })
+            .catch(function(err) { console.log('submitScore error:', err); });
+        }
+
+        function loadLeaderboards() {
+            fetch('/api/leaderboard')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                renderBoard('board-all', data.all_time);
+                renderBoard('board-daily', data.daily);
+                renderBoard('board-weekly', data.weekly);
+            });
+        }
+
+        function renderBoard(id, list) {
+            var ol = document.getElementById(id).querySelector('ol');
+            ol.innerHTML = '';
+            if (!list || list.length === 0) {
+                var li = document.createElement('li');
+                li.textContent = 'No scores yet';
+                li.style.listStyle = 'none';
+                ol.appendChild(li);
+                return;
+            }
+            for (var i = 0; i < list.length; i++) {
+                var li = document.createElement('li');
+                li.className = i === 0 ? 'rank1' : '';
+                var d = new Date(list[i].ts);
+                li.textContent = (i+1) + '. ' + list[i].name + ' - ' + list[i].score + ' (Lv' + list[i].level + ')';
+                var span = document.createElement('span');
+                span.style.cssText = 'float:right;font-size:11px;color:#666';
+                span.textContent = (d.getMonth()+1)+'/'+d.getDate();
+                li.appendChild(span);
+                ol.appendChild(li);
+            }
+        }
+    </script>
+</body>
+</html>
