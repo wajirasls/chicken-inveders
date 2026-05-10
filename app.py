@@ -28,13 +28,19 @@ def index():
 def submit_score():
     data = request.get_json()
     scores = load_scores()
-    entry = {
-        'name': data['name'][:20],
-        'score': data['score'],
-        'level': data['level'],
-        'ts': datetime.now().isoformat()
-    }
-    scores.append(entry)
+    name = data['name'][:20]
+    existing = next((s for s in scores if s['name'] == name), None)
+    if existing:
+        existing['score'] = data['score']
+        existing['level'] = data['level']
+        existing['ts'] = datetime.now().isoformat()
+    else:
+        scores.append({
+            'name': name,
+            'score': data['score'],
+            'level': data['level'],
+            'ts': datetime.now().isoformat()
+        })
     save_scores(scores)
     return jsonify({'ok': True})
 
